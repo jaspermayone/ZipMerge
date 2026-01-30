@@ -48,21 +48,26 @@ class FileComparer {
             try copyContents(from: extractedRoot, to: projectDirectory)
 
             // Stage all changes
-            try runGitCommand(["add", "-A"], at: projectDirectory)
+            _ = try runGitCommand(["add", "-A"], at: projectDirectory)
 
             // Commit the changes
             let commitMessage = "Import from zip: \(zipURL.lastPathComponent)"
-            try runGitCommand(["commit", "-m", commitMessage], at: projectDirectory)
+            _ = try runGitCommand(["commit", "-m", commitMessage], at: projectDirectory)
 
             // Switch back to original branch
-            try runGitCommand(["checkout", originalBranch], at: projectDirectory)
+            _ = try runGitCommand(["checkout", originalBranch], at: projectDirectory)
 
             // Initiate merge without committing (allows selective staging)
             let mergeOutput = try? runGitCommand(["merge", "--no-commit", "--no-ff", branchName], at: projectDirectory)
             let hasConflicts = mergeOutput?.contains("CONFLICT") ?? false
 
             // Unstage all changes so user can selectively stage with git add -p
-            try? runGitCommand(["reset"], at: projectDirectory)
+            _ = try? runGitCommand(["reset"], at: projectDirectory)
+
+            // Write a cleaner commit message template
+            let cleanMessage = "Merge changes from \(zipURL.deletingPathExtension().lastPathComponent)"
+            let mergeMessagePath = projectDirectory.appendingPathComponent(".git/MERGE_MSG")
+            try? cleanMessage.write(to: mergeMessagePath, atomically: true, encoding: .utf8)
 
             return GitMergeResult(
                 branchName: branchName,
@@ -71,15 +76,15 @@ class FileComparer {
             )
         } catch {
             // Cleanup: try to switch back to original branch if something went wrong
-            try? runGitCommand(["checkout", originalBranch], at: projectDirectory)
-            try? runGitCommand(["branch", "-D", branchName], at: projectDirectory)
+            _ = try? runGitCommand(["checkout", originalBranch], at: projectDirectory)
+            _ = try? runGitCommand(["branch", "-D", branchName], at: projectDirectory)
             throw error
         }
     }
 
     static func cleanupGitMerge(branchName: String, projectDirectory: URL) throws {
         // Delete the temporary branch
-        try runGitCommand(["branch", "-D", branchName], at: projectDirectory)
+        _ = try runGitCommand(["branch", "-D", branchName], at: projectDirectory)
     }
 
     private static func runGitCommand(_ arguments: [String], at directory: URL) throws -> String {
