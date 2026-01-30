@@ -13,43 +13,23 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var yourDirectory: URL?
     @State private var zipFile: URL?
-    @State private var comparison: ComparisonResult?
-    @State private var selectedFile: ComparedFile?
+    @State private var mergeResult: FileComparer.GitMergeResult?
     @State private var isProcessing = false
     @State private var errorMessage: String?
-    @State private var showingSuccess = false
-    @State private var tempDirectory: URL?
-    @State private var showingGitCommit = false
-    @State private var commitMessage = ""
+    @State private var showingInstructions = false
     
     var body: some View {
-        HSplitView {
-            // Left panel - file list
-            VStack(spacing: 0) {
-                setupArea
-                
-                if let comparison = comparison {
-                    fileListView(comparison)
-                } else {
-                    emptyStateView
-                }
-            }
-            .frame(minWidth: 300, idealWidth: 350)
-            
-            // Right panel - diff view
-            if let file = selectedFile, file.changeType == .modified || file.changeType == .added || file.changeType == .deleted {
-                DiffView(file: file)
+        VStack(spacing: 20) {
+            setupArea
+
+            if let merge = mergeResult {
+                mergeInstructionsView(merge)
             } else {
-                VStack {
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 48))
-                        .foregroundColor(.secondary)
-                    Text("Select a file to view changes")
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyStateView
             }
         }
+        .padding()
+        .frame(minWidth: 600, minHeight: 400)
         .alert("Error", isPresented: .init(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
@@ -57,30 +37,6 @@ struct ContentView: View {
             Button("OK") { errorMessage = nil }
         } message: {
             Text(errorMessage ?? "")
-        }
-        .alert("Success", isPresented: $showingSuccess) {
-            Button("OK") {
-                if isGitRepository() {
-                    showingSuccess = false
-                    showingGitCommit = true
-                } else {
-                    cleanupAfterMerge()
-                }
-            }
-        } message: {
-            Text("Changes applied successfully!")
-        }
-        .alert("Create Git Commit", isPresented: $showingGitCommit) {
-            TextField("Commit message", text: $commitMessage)
-            Button("Commit") {
-                createGitCommit()
-                cleanupAfterMerge()
-            }
-            Button("Skip") {
-                cleanupAfterMerge()
-            }
-        } message: {
-            Text("Would you like to create a git commit for these changes?")
         }
     }
     
@@ -91,7 +47,7 @@ struct ContentView: View {
                 Image(systemName: "folder.fill")
                     .foregroundColor(.blue)
                 VStack(alignment: .leading) {
-                    Text("Your Project")
+                    Text("Your Git Project")
                         .font(.headline)
                     Text(yourDirectory?.lastPathComponent ?? "Not selected")
                         .font(.caption)
@@ -105,30 +61,26 @@ struct ContentView: View {
             .padding(10)
             .background(Color(NSColor.controlBackgroundColor))
             .cornerRadius(8)
-            
+
+            if !isGitRepository() && yourDirectory != nil {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("Selected directory is not a git repository")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
             // Zip drop zone
             ZipDropZone(zipFile: $zipFile) {
                 processZip()
             }
-            
+
             if isProcessing {
                 ProgressView("Processing...")
             }
-            
-            if let comparison = comparison, comparison.changedFiles.count > 0 {
-                HStack {
-                    Text("\(comparison.pendingCount) pending")
-                        .foregroundColor(.orange)
-                    Spacer()
-                    Button("Apply Changes") {
-                        applyChanges()
-                    }
-                    .disabled(comparison.pendingCount > 0)
-                    .buttonStyle(.borderedProminent)
-                }
-            }
         }
-        .padding()
     }
     
     private var emptyStateView: some View {
@@ -137,58 +89,93 @@ struct ContentView: View {
             Image(systemName: "arrow.down.doc.fill")
                 .font(.system(size: 48))
                 .foregroundColor(.secondary)
-            Text("Drop a zip file to compare")
+            Text("Drop a zip file to merge")
                 .font(.title3)
                 .foregroundColor(.secondary)
-            Text("First, choose your project folder above")
+            Text("First, choose your git project folder above")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
         }
         .frame(maxWidth: .infinity)
     }
-    
-    private func fileListView(_ comparison: ComparisonResult) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Changed Files")
-                .font(.headline)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-            
-            Divider()
-            
-            if comparison.changedFiles.isEmpty {
-                VStack {
-                    Spacer()
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 48))
-                        .foregroundColor(.green)
-                    Text("No changes detected")
+
+    private func mergeInstructionsView(_ merge: FileComparer.GitMergeResult) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                    .font(.title)
+                VStack(alignment: .leading) {
+                    Text("Merge Initiated!")
+                        .font(.title2)
+                        .bold()
+                    Text("Branch: \(merge.branchName)")
+                        .font(.caption)
                         .foregroundColor(.secondary)
-                    Spacer()
                 }
-                .frame(maxWidth: .infinity)
-            } else {
-                List(comparison.changedFiles, selection: $selectedFile) { file in
-                    FileRowView(file: binding(for: file))
-                        .tag(file)
-                }
-                .listStyle(.inset)
+                Spacer()
             }
+
+            if merge.hasConflicts {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("Merge has conflicts - resolve them in your terminal")
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Next Steps:")
+                    .font(.headline)
+
+                Text("Open your terminal in the project directory and use git to selectively merge changes:")
+                    .foregroundColor(.secondary)
+
+                codeBlock("cd \(yourDirectory?.path ?? "")")
+
+                Text("1. Review staged changes:")
+                    .font(.subheadline)
+                codeBlock("git status")
+
+                Text("2. Selectively stage hunks (optional):")
+                    .font(.subheadline)
+                codeBlock("git add -p")
+
+                Text("3. Commit the merge:")
+                    .font(.subheadline)
+                codeBlock("git commit")
+
+                Text("4. After committing, come back here and click 'Cleanup' to remove the temporary branch and zip file.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 8)
+            }
+            .padding()
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+
+            HStack {
+                Spacer()
+                Button("Cleanup") {
+                    cleanupAfterMerge()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            Spacer()
         }
     }
-    
-    private func binding(for file: ComparedFile) -> Binding<ComparedFile> {
-        Binding(
-            get: { 
-                comparison?.files.first { $0.id == file.id } ?? file
-            },
-            set: { newValue in
-                if let index = comparison?.files.firstIndex(where: { $0.id == file.id }) {
-                    comparison?.files[index] = newValue
-                }
-            }
-        )
+
+    private func codeBlock(_ text: String) -> some View {
+        Text(text)
+            .font(.system(.body, design: .monospaced))
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(NSColor.textBackgroundColor))
+            .cornerRadius(4)
+            .textSelection(.enabled)
     }
     
     private func chooseYourDirectory() {
@@ -209,26 +196,19 @@ struct ContentView: View {
             return
         }
 
+        guard isGitRepository() else {
+            errorMessage = "Selected directory is not a git repository. ZipMerge requires git to work."
+            return
+        }
+
         isProcessing = true
 
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                // Create temp directory for extraction
-                let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-                try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-
-                // Extract zip
-                try FileComparer.extractZip(at: zip, to: tempDir)
-
-                // Find the actual root (in case zip has a wrapper folder)
-                let theirRoot = FileComparer.findRootDirectory(in: tempDir)
-
-                // Compare
-                let result = try FileComparer.compare(yourDirectory: yours, theirDirectory: theirRoot)
+                let result = try FileComparer.importZipToGitBranch(zipURL: zip, projectDirectory: yours)
 
                 DispatchQueue.main.async {
-                    self.tempDirectory = tempDir
-                    self.comparison = result
+                    self.mergeResult = result
                     self.isProcessing = false
                 }
             } catch {
@@ -240,33 +220,24 @@ struct ContentView: View {
         }
     }
     
-    private func applyChanges() {
-        guard let comparison = comparison else { return }
+    private func cleanupAfterMerge() {
+        guard let merge = mergeResult, let directory = yourDirectory else { return }
 
         do {
-            try FileComparer.applyChanges(comparison)
-            showingSuccess = true
+            // Delete the temporary git branch
+            try FileComparer.cleanupGitMerge(branchName: merge.branchName, projectDirectory: directory)
+
+            // Delete the zip file
+            if let zip = zipFile {
+                try? FileManager.default.removeItem(at: zip)
+            }
+
+            // Reset state
+            mergeResult = nil
+            zipFile = nil
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Failed to cleanup: \(error.localizedDescription)"
         }
-    }
-
-    private func cleanupAfterMerge() {
-        // Clean up temp directory
-        if let tempDir = tempDirectory {
-            try? FileManager.default.removeItem(at: tempDir)
-            tempDirectory = nil
-        }
-
-        // Delete the zip file
-        if let zip = zipFile {
-            try? FileManager.default.removeItem(at: zip)
-        }
-
-        // Reset state
-        comparison = nil
-        zipFile = nil
-        commitMessage = ""
     }
 
     private func isGitRepository() -> Bool {
@@ -275,82 +246,6 @@ struct ContentView: View {
         let gitDir = directory.appendingPathComponent(".git")
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(atPath: gitDir.path, isDirectory: &isDirectory) && isDirectory.boolValue
-    }
-
-    private func createGitCommit() {
-        guard let directory = yourDirectory else { return }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.currentDirectoryURL = directory
-        process.arguments = ["commit", "-am", commitMessage.isEmpty ? "[ZipMerge Auto Merge]" : commitMessage]
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            errorMessage = "Failed to create git commit: \(error.localizedDescription)"
-        }
-    }
-}
-
-struct FileRowView: View {
-    @Binding var file: ComparedFile
-    
-    var body: some View {
-        HStack {
-            Image(systemName: file.icon)
-                .foregroundColor(colorForType(file.changeType))
-            
-            VStack(alignment: .leading) {
-                Text(file.fileName)
-                    .lineLimit(1)
-                Text(file.relativePath)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-            
-            Spacer()
-            
-            if file.changeType != .unchanged {
-                decisionButtons
-            }
-        }
-        .padding(.vertical, 4)
-    }
-    
-    private var decisionButtons: some View {
-        HStack(spacing: 4) {
-            Button {
-                file.decision = .keepMine
-            } label: {
-                Image(systemName: "person.fill")
-                    .foregroundColor(file.decision == .keepMine ? .white : .blue)
-            }
-            .buttonStyle(.bordered)
-            .tint(file.decision == .keepMine ? .blue : nil)
-            .help("Keep your version")
-            
-            Button {
-                file.decision = .takeTheirs
-            } label: {
-                Image(systemName: "graduationcap.fill")
-                    .foregroundColor(file.decision == .takeTheirs ? .white : .green)
-            }
-            .buttonStyle(.bordered)
-            .tint(file.decision == .takeTheirs ? .green : nil)
-            .help("Take teacher's version")
-        }
-    }
-    
-    private func colorForType(_ type: FileChangeType) -> Color {
-        switch type {
-        case .added: return .green
-        case .modified: return .orange
-        case .deleted: return .red
-        case .unchanged: return .gray
-        }
     }
 }
 

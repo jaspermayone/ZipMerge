@@ -11,19 +11,137 @@ import Foundation
 import Compression
 
 class FileComparer {
-    
+
+    struct GitMergeResult {
+        let branchName: String
+        let originalBranch: String
+        let hasConflicts: Bool
+    }
+
+    static func importZipToGitBranch(zipURL: URL, projectDirectory: URL) throws -> GitMergeResult {
+        let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let branchName = "zip-import-\(timestamp)"
+
+        // Get current branch name
+        let originalBranch = try runGitCommand(["branch", "--show-current"], at: projectDirectory).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Create temp directory for extraction
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        // Ensure temp directory is cleaned up
+        defer {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        do {
+            // Extract zip to temp directory
+            try extractZip(at: zipURL, to: tempDir)
+
+            // Find the actual root (in case zip has a wrapper folder)
+            let extractedRoot = findRootDirectory(in: tempDir)
+
+            // Create and checkout new branch
+            try runGitCommand(["checkout", "-b", branchName], at: projectDirectory)
+
+            // Copy extracted files to project directory
+            try copyContents(from: extractedRoot, to: projectDirectory)
+
+            // Stage all changes
+            try runGitCommand(["add", "-A"], at: projectDirectory)
+
+            // Commit the changes
+            let commitMessage = "Import from zip: \(zipURL.lastPathComponent)"
+            try runGitCommand(["commit", "-m", commitMessage], at: projectDirectory)
+
+            // Switch back to original branch
+            try runGitCommand(["checkout", originalBranch], at: projectDirectory)
+
+            // Initiate merge without committing (allows selective staging)
+            let mergeOutput = try? runGitCommand(["merge", "--no-commit", "--no-ff", branchName], at: projectDirectory)
+            let hasConflicts = mergeOutput?.contains("CONFLICT") ?? false
+
+            return GitMergeResult(
+                branchName: branchName,
+                originalBranch: originalBranch,
+                hasConflicts: hasConflicts
+            )
+        } catch {
+            // Cleanup: try to switch back to original branch if something went wrong
+            try? runGitCommand(["checkout", originalBranch], at: projectDirectory)
+            try? runGitCommand(["branch", "-D", branchName], at: projectDirectory)
+            throw error
+        }
+    }
+
+    static func cleanupGitMerge(branchName: String, projectDirectory: URL) throws {
+        // Delete the temporary branch
+        try runGitCommand(["branch", "-D", branchName], at: projectDirectory)
+    }
+
+    private static func runGitCommand(_ arguments: [String], at directory: URL) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.currentDirectoryURL = directory
+        process.arguments = arguments
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: outputData, encoding: .utf8) ?? ""
+
+        if process.terminationStatus != 0 {
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorOutput = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+            throw NSError(domain: "ZipMerge", code: Int(process.terminationStatus),
+                         userInfo: [NSLocalizedDescriptionKey: "Git command failed: \(errorOutput)"])
+        }
+
+        return output
+    }
+
+    private static func copyContents(from source: URL, to destination: URL) throws {
+        let fm = FileManager.default
+        let contents = try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)
+
+        for item in contents {
+            let itemName = item.lastPathComponent
+
+            // Skip .git directory, .DS_Store, and __MACOSX
+            if itemName == ".git" || itemName == ".DS_Store" || itemName == "__MACOSX" {
+                continue
+            }
+
+            let destPath = destination.appendingPathComponent(itemName)
+
+            // Remove existing item if it exists
+            if fm.fileExists(atPath: destPath.path) {
+                try fm.removeItem(at: destPath)
+            }
+
+            // Copy the item (including hidden files for Eclipse projects)
+            try fm.copyItem(at: item, to: destPath)
+        }
+    }
+
     static func extractZip(at zipURL: URL, to destination: URL) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
         process.arguments = ["-o", zipURL.path, "-d", destination.path]
-        
+
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
-        
+
         try process.run()
         process.waitUntilExit()
-        
+
         if process.terminationStatus != 0 {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: data, encoding: .utf8) ?? "Unknown error"
@@ -47,157 +165,5 @@ class FileComparer {
         }
         
         return directory
-    }
-    
-    static func compare(yourDirectory: URL, theirDirectory: URL) throws -> ComparisonResult {
-        let fm = FileManager.default
-        var files: [ComparedFile] = []
-        
-        // Get all files from both directories
-        let yourFiles = getAllFiles(in: yourDirectory, relativeTo: yourDirectory)
-        let theirFiles = getAllFiles(in: theirDirectory, relativeTo: theirDirectory)
-        
-        let yourPaths = Set(yourFiles.keys)
-        let theirPaths = Set(theirFiles.keys)
-        
-        // Files only in theirs (added)
-        for path in theirPaths.subtracting(yourPaths) {
-            let content = try? String(contentsOf: theirFiles[path]!, encoding: .utf8)
-            files.append(ComparedFile(
-                relativePath: path,
-                changeType: .added,
-                yourContent: nil,
-                theirContent: content
-            ))
-        }
-        
-        // Files only in yours (deleted from teacher's version)
-        for path in yourPaths.subtracting(theirPaths) {
-            let content = try? String(contentsOf: yourFiles[path]!, encoding: .utf8)
-            files.append(ComparedFile(
-                relativePath: path,
-                changeType: .deleted,
-                yourContent: content,
-                theirContent: nil
-            ))
-        }
-        
-        // Files in both - check if modified
-        for path in yourPaths.intersection(theirPaths) {
-            let yourURL = yourFiles[path]!
-            let theirURL = theirFiles[path]!
-            
-            let yourData = try? Data(contentsOf: yourURL)
-            let theirData = try? Data(contentsOf: theirURL)
-            
-            if yourData == theirData {
-                files.append(ComparedFile(
-                    relativePath: path,
-                    changeType: .unchanged
-                ))
-            } else {
-                let yourContent = try? String(contentsOf: yourURL, encoding: .utf8)
-                let theirContent = try? String(contentsOf: theirURL, encoding: .utf8)
-
-                // Compute hunks for modified files
-                let hunks = computeHunks(yourContent: yourContent ?? "", theirContent: theirContent ?? "")
-
-                files.append(ComparedFile(
-                    relativePath: path,
-                    changeType: .modified,
-                    yourContent: yourContent,
-                    theirContent: theirContent,
-                    hunks: hunks
-                ))
-            }
-        }
-        
-        // Sort by path
-        files.sort { $0.relativePath < $1.relativePath }
-        
-        return ComparisonResult(
-            files: files,
-            yourDirectory: yourDirectory,
-            theirDirectory: theirDirectory
-        )
-    }
-    
-    private static func getAllFiles(in directory: URL, relativeTo base: URL) -> [String: URL] {
-        let fm = FileManager.default
-        var result: [String: URL] = [:]
-        
-        guard let enumerator = fm.enumerator(
-            at: directory,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return result
-        }
-        
-        for case let fileURL as URL in enumerator {
-            guard let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
-                  resourceValues.isRegularFile == true else {
-                continue
-            }
-            
-            let relativePath = fileURL.path.replacingOccurrences(of: base.path + "/", with: "")
-            result[relativePath] = fileURL
-        }
-        
-        return result
-    }
-    
-    static func applyChanges(_ comparison: ComparisonResult) throws {
-        let fm = FileManager.default
-        
-        for file in comparison.files {
-            guard file.decision != .pending else { continue }
-            
-            let yourFile = comparison.yourDirectory.appendingPathComponent(file.relativePath)
-            let theirFile = comparison.theirDirectory.appendingPathComponent(file.relativePath)
-            
-            switch (file.changeType, file.decision) {
-            case (.added, .takeTheirs):
-                // Copy new file from theirs to yours
-                let parentDir = yourFile.deletingLastPathComponent()
-                try fm.createDirectory(at: parentDir, withIntermediateDirectories: true)
-                try fm.copyItem(at: theirFile, to: yourFile)
-                
-            case (.modified, .takeTheirs):
-                // Check if hunks are used
-                if !file.hunks.isEmpty {
-                    // Apply selected hunks only
-                    try applySelectedHunks(file: file, yourFile: yourFile)
-                } else {
-                    // Replace entire file with theirs
-                    try fm.removeItem(at: yourFile)
-                    try fm.copyItem(at: theirFile, to: yourFile)
-                }
-                
-            case (.deleted, .takeTheirs):
-                // Delete your file (it's not in teacher's version)
-                try fm.removeItem(at: yourFile)
-                
-            case (_, .keepMine):
-                // Do nothing, keep your version
-                break
-                
-            default:
-                break
-            }
-        }
-    }
-
-    private static func computeHunks(yourContent: String, theirContent: String) -> [DiffHunk] {
-        // For now, return empty array - hunk selection can be added later
-        // This feature requires a robust diff algorithm which is complex to implement
-        return []
-    }
-
-    private static func applySelectedHunks(file: ComparedFile, yourFile: URL) throws {
-        // This will be implemented when hunk selection UI is ready
-        // For now, just replace the entire file
-        guard let theirContent = file.theirContent else { return }
-        try theirContent.write(to: yourFile, atomically: true, encoding: .utf8)
     }
 }
