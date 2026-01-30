@@ -4,19 +4,32 @@ This document describes how to release ZipMerge.
 
 ## Local Release Script (Recommended)
 
-The easiest way to create a release is using the local `release.sh` script:
+The easiest way to create a release is using the local `release.sh` script.
 
+**Option 1: Create tag first (recommended for custom tag messages)**
 ```bash
+# Create a tag with a custom message
+git tag -a v1.0.0 -m "Version 1.0.0 - Your custom message"
+
+# Run the release script (will use existing tag)
+./release.sh v1.0.0
+```
+
+**Option 2: Let the script create the tag**
+```bash
+# Script will create a simple tag automatically
 ./release.sh v1.0.0
 ```
 
 This script will:
 1. Build the app with Developer ID signing
 2. Notarize the app with Apple
-3. Create a GitHub release with the signed .zip
-4. Calculate the SHA256 hash
-5. Automatically update the Homebrew cask
-6. Commit and push the cask update
+3. Use existing git tag or create one if needed
+4. Push the tag to GitHub
+5. Create a GitHub release with the signed .zip
+6. Calculate the SHA256 hash
+7. Automatically update the Homebrew cask
+8. Commit and push the cask update
 
 **Prerequisites:**
 - `gh` CLI installed (`brew install gh`) and authenticated
@@ -74,9 +87,9 @@ An app-specific password for notarization (NOT your Apple ID password).
 4. Enter "GitHub Actions Notarization" as the name
 5. Copy the generated password and save it as APPLE_ID_PASSWORD in GitHub
 
-## Creating a Release
+## Manual GitHub Actions Release (Alternative)
 
-Once secrets are configured:
+If you prefer to use GitHub Actions instead of the local script:
 
 ```bash
 # Ensure you're on main branch with latest changes
@@ -88,35 +101,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The GitHub Actions workflow will automatically:
-- Build and sign the app
-- Notarize with Apple (takes 5-10 minutes)
-- Create a GitHub release with ZipMerge.zip
-- Include SHA256 hash in release notes
-
-## Updating the Homebrew Cask
-
-After the release completes:
-
-1. Copy the SHA256 from the release notes
-2. Update `/Users/jsp/dev/projects/homebrew-tap/Casks/zipmerge.rb`:
-   ```ruby
-   sha256 "THE_SHA256_FROM_RELEASE_NOTES"
-   ```
-3. Update version if needed
-4. Commit and push to homebrew-tap:
-   ```bash
-   cd /Users/jsp/dev/projects/homebrew-tap
-   git add Casks/zipmerge.rb
-   git commit -m "Update zipmerge to v1.0.0"
-   git push
-   ```
-
-Users can then install with:
-```bash
-brew tap jaspermayone/tap
-brew install --cask zipmerge
-```
+The GitHub Actions workflow will automatically build, sign, notarize, and create a release. However, you'll need to manually update the Homebrew cask afterward (the local script does this automatically).
 
 ## Troubleshooting
 

@@ -124,10 +124,18 @@ echo -e "${GREEN}🔢 Calculating SHA256...${NC}"
 SHA256=$(shasum -a 256 ZipMerge.zip | awk '{print $1}')
 echo -e "SHA256: ${YELLOW}${SHA256}${NC}"
 
-# Create git tag
-echo -e "${GREEN}🏷️  Creating git tag...${NC}"
-git tag -a "$VERSION" -m "Release $VERSION" || echo "Tag already exists"
-git push origin "$VERSION" || echo "Tag already pushed"
+# Ensure git tag exists and is pushed
+echo -e "${GREEN}🏷️  Ensuring git tag exists...${NC}"
+if git rev-parse "$VERSION" >/dev/null 2>&1; then
+    echo "Tag $VERSION already exists locally"
+else
+    echo "Creating tag $VERSION"
+    git tag -a "$VERSION" -m "Release $VERSION"
+fi
+
+# Push the tag (force in case it was updated)
+echo "Pushing tag to origin..."
+git push origin "$VERSION" 2>/dev/null || git push --force origin "$VERSION"
 
 # Create GitHub release
 echo -e "${GREEN}📤 Creating GitHub release...${NC}"
