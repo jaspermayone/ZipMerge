@@ -64,7 +64,6 @@ xcodebuild -project ZipMerge.xcodeproj \
     -scheme ZipMerge \
     -configuration Release \
     -derivedDataPath ./build \
-    CODE_SIGN_IDENTITY="Developer ID Application" \
     clean build
 
 if [ $? -ne 0 ]; then
@@ -73,6 +72,19 @@ if [ $? -ne 0 ]; then
 fi
 
 APP_PATH="./build/Build/Products/Release/ZipMerge.app"
+
+# Re-sign with Developer ID for distribution
+echo -e "${GREEN}🔏 Signing with Developer ID...${NC}"
+codesign --force --deep --sign "Developer ID Application" \
+    --options runtime \
+    --timestamp \
+    "$APP_PATH"
+
+if [ $? -ne 0 ]; then
+    echo -e "${RED}Code signing failed!${NC}"
+    echo "Make sure you have a valid Developer ID Application certificate."
+    exit 1
+fi
 
 # Verify code signing
 echo -e "${GREEN}✅ Verifying code signature...${NC}"
