@@ -61,6 +61,9 @@ class FileComparer {
             let mergeOutput = try? runGitCommand(["merge", "--no-commit", "--no-ff", branchName], at: projectDirectory)
             let hasConflicts = mergeOutput?.contains("CONFLICT") ?? false
 
+            // Unstage all changes so user can selectively stage with git add -p
+            try? runGitCommand(["reset"], at: projectDirectory)
+
             return GitMergeResult(
                 branchName: branchName,
                 originalBranch: originalBranch,
