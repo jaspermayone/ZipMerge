@@ -1,17 +1,35 @@
 # Release Process
 
-This document describes the automated release pipeline for ZipMerge.
+This document describes how to release ZipMerge.
 
-## Automated Release Pipeline
+## Local Release Script (Recommended)
 
-Releases are automated via GitHub Actions. When you push a version tag, the workflow will:
+The easiest way to create a release is using the local `release.sh` script:
 
+```bash
+./release.sh v1.0.0
+```
+
+This script will:
 1. Build the app with Developer ID signing
 2. Notarize the app with Apple
 3. Create a GitHub release with the signed .zip
-4. Output the SHA256 hash for the Homebrew cask
+4. Calculate the SHA256 hash
+5. Automatically update the Homebrew cask
+6. Commit and push the cask update
 
-## Required GitHub Secrets
+**Prerequisites:**
+- `gh` CLI installed (`brew install gh`) and authenticated
+- Developer ID Application certificate in Keychain
+- Apple ID app-specific password (create at https://appleid.apple.com/account/manage)
+
+The script will prompt for your Apple ID and app-specific password.
+
+## Alternative: GitHub Actions (Optional)
+
+If you prefer CI/CD, there's also a GitHub Actions workflow. However, it requires exporting your signing certificate.
+
+## Required GitHub Secrets (GitHub Actions only)
 
 Before creating your first release, set up these secrets in GitHub repository settings (Settings → Secrets and variables → Actions):
 

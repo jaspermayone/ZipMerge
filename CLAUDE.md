@@ -40,29 +40,28 @@ xcodebuild -project ZipMerge.xcodeproj -scheme ZipMerge -configuration Release c
 cp -r build/Release/ZipMerge.app /Applications/
 ```
 
-### Automated Release Pipeline
+### Release Process
 
-**See RELEASING.md for complete setup instructions.**
+**Use the local release script for simplicity:**
 
-The project uses GitHub Actions for automated releases. When you push a version tag, it automatically:
+```bash
+./release.sh v1.0.0
+```
+
+This automated script handles everything:
 1. Builds with Developer ID signing
 2. Notarizes with Apple
 3. Creates GitHub release with signed .zip
-4. Outputs SHA256 for Homebrew cask
+4. Calculates SHA256 hash
+5. Updates Homebrew cask automatically
+6. Commits and pushes cask update
 
-**Quick release process:**
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+**Prerequisites:**
+- `gh` CLI installed and authenticated
+- Developer ID Application certificate in Keychain
+- Apple ID app-specific password (prompted during script)
 
-Then update the SHA256 in `/Users/jsp/dev/projects/homebrew-tap/Casks/zipmerge.rb` from the release notes.
-
-**Required GitHub Secrets** (one-time setup - see RELEASING.md):
-- `CERTIFICATE_BASE64` - Developer ID certificate
-- `CERTIFICATE_PASSWORD` - Certificate password
-- `APPLE_ID` - Apple ID email
-- `APPLE_ID_PASSWORD` - App-specific password for notarization
+The script is fully automated and requires no manual steps. See RELEASING.md for details.
 
 ### Distributing via Homebrew
 
