@@ -93,6 +93,21 @@ class FileComparer {
         process.currentDirectoryURL = directory
         process.arguments = arguments
 
+        // Set up environment with full PATH so git hooks can find git-lfs and other tools
+        var environment = ProcessInfo.processInfo.environment
+        if let userPath = environment["PATH"] {
+            // Ensure common git-lfs installation paths are included
+            let additionalPaths = [
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                "/etc/profiles/per-user/\(NSUserName())/bin"
+            ]
+            let pathComponents = userPath.split(separator: ":").map(String.init)
+            let allPaths = (additionalPaths + pathComponents).joined(separator: ":")
+            environment["PATH"] = allPaths
+        }
+        process.environment = environment
+
         let outputPipe = Pipe()
         let errorPipe = Pipe()
         process.standardOutput = outputPipe
