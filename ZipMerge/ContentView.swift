@@ -151,6 +151,11 @@ struct ContentView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.top, 8)
+
+                Text("⚠️ Cleanup will discard any uncommitted changes and abort the merge.")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .padding(.top, 4)
             }
             .padding()
             .background(Color(NSColor.controlBackgroundColor))

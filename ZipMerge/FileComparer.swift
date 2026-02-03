@@ -83,6 +83,19 @@ class FileComparer {
     }
 
     static func cleanupGitMerge(branchName: String, projectDirectory: URL) throws {
+        // Check if a merge is in progress by looking for MERGE_HEAD
+        let mergeHeadPath = projectDirectory.appendingPathComponent(".git/MERGE_HEAD")
+        if FileManager.default.fileExists(atPath: mergeHeadPath.path) {
+            // Abort the merge to clean up merge state
+            _ = try? runGitCommand(["merge", "--abort"], at: projectDirectory)
+        }
+
+        // Discard any uncommitted changes
+        _ = try? runGitCommand(["reset", "--hard"], at: projectDirectory)
+
+        // Clean any untracked files (but preserve ignored files)
+        _ = try? runGitCommand(["clean", "-fd"], at: projectDirectory)
+
         // Delete the temporary branch
         _ = try runGitCommand(["branch", "-D", branchName], at: projectDirectory)
     }
